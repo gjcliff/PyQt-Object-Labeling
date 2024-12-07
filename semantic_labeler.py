@@ -7,9 +7,10 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QLineEdit,
 )
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QPixmap, QPainter, QPen
+from PyQt6.QtCore import Qt, QRect, QPoint
 
 
 class MainWindow(QWidget):
@@ -82,13 +83,16 @@ class MainWindow(QWidget):
             )
         )
 
+        # Variables for bounding box
+        self.start_point = None
+        self.end_point = None
+        self.current_label = None
+        self.bounding_boxes = {}  # Store bounding boxes as {label: (coords)}
+
         # Load images from directories
         self.images = self.load_images(images_dir)
         self.depths = self.load_images(depths_dir)
         self.current_index = 0  # Start with the first pair
-
-        # Show the first pair of images
-        self.display_images()
 
         # Connect buttons to methods
         self.left_button.clicked.connect(self.show_previous_images)
@@ -139,6 +143,132 @@ class MainWindow(QWidget):
         """Show the next pair of images."""
         self.current_index = (self.current_index + 1) % len(self.images)
         self.display_images()
+
+    def mousePressEvent(self, event):
+        """Start drawing a bounding box."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.pos()
+            if self.left_image_label.geometry().contains(pos):
+                self.start_point = pos - self.left_image_label.geometry().topLeft()
+            elif self.right_image_label.geometry().contains(pos):
+                self.start_point = pos - self.right_image_label.geometry().topLeft()
+            self.end_point = self.start_point
+
+    def mouseMoveEvent(self, event):
+        """Update the bounding box during mouse drag."""
+        if self.start_point:
+            pos = event.pos()
+            if self.left_image_label.geometry().contains(pos):
+                self.end_point = pos - self.left_image_label.geometry().topLeft()
+            elif self.right_image_label.geometry().contains(pos):
+                self.end_point = pos - self.right_image_label.geometry().topLeft()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        """Finish drawing the bounding box."""
+        if event.button() == Qt.MouseButton.LeftButton and self.start_point:
+            # Save the bounding box coordinates
+            box_coords = QRect(self.start_point, self.end_point).normalized()
+            label_name = "box"
+
+            # Add QLabel for the label above the box
+            label_edit = QLineEdit(self)
+            label_edit.setText(label_name)
+            label_edit.setGeometry(
+                box_coords.topLeft().x() + self.left_image_label.geometry().x(),
+                box_coords.topLeft().y() + self.left_image_label.geometry().y() - 20,
+                50,
+                20,
+            )
+            label_edit.show()
+            label_edit.editingFinished.connect(
+                lambda: self.update_label(label_edit, box_coords)
+            )
+
+            # Add bounding box to the dictionary
+            self.bounding_boxes[label_name] = box_coords
+            self.start_point = None
+            self.end_point = None
+            self.update()
+
+    def paintEvent(self, event):
+        """Draw the bounding boxes."""
+        left_image_path = self.images[self.current_index]
+        left_pixmap = QPixmap(left_image_path)
+        right_image_path = self.depths[self.current_index]
+        right_pixmap = QPixmap(right_image_path)
+
+        painter = QPainter(left_pixmap)
+        pen = QPen(Qt.GlobalColor.green, 2, Qt.PenStyle.SolidLine)
+        painter.setPen(pen)
+
+        # Draw current bounding box
+        if self.start_point and self.end_point:
+            box = QRect(self.start_point, self.end_point).normalized()
+            if self.left_image_label.geometry().contains(
+                self.mapFromGlobal(QPoint(box.x(), box.y()))
+            ):
+                painter.drawRect(
+                    box.translated(self.left_image_label.geometry().topLeft())
+                )
+            elif self.right_image_label.geometry().contains(
+                self.mapFromGlobal(QPoint(box.x(), box.y()))
+            ):
+                painter.drawRect(
+                    box.translated(self.right_image_label.geometry().topLeft())
+                )
+
+        # Draw saved bounding boxes
+        for label, box in self.bounding_boxes.items():
+            if self.left_image_label.geometry().contains(
+                self.mapFromGlobal(QPoint(box.x(), box.y()))
+            ):
+                painter.drawRect(
+                    box.translated(self.left_image_label.geometry().topLeft())
+                )
+            elif self.right_image_label.geometry().contains(
+                self.mapFromGlobal(QPoint(box.x(), box.y()))
+            ):
+                painter.drawRect(
+                    box.translated(self.right_image_label.geometry().topLeft())
+                )
+
+        painter.end()
+        if 0 <= self.current_index < len(self.images):
+            # Load left image
+            self.left_image_label.setPixmap(
+                left_pixmap.scaled(
+                    self.image_width,
+                    self.image_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+
+            # Load right image
+            self.right_image_label.setPixmap(
+                right_pixmap.scaled(
+                    self.image_width,
+                    self.image_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        else:
+            if self.current_index < 0:
+                self.current_index = len(self.images) - 1
+            else:
+                self.current_index = 0
+
+    def update_label(self, label_edit, box_coords):
+        """Update the label in the bounding boxes dictionary."""
+        new_label = label_edit.text()
+        if new_label:
+            old_label = [k for k, v in self.bounding_boxes.items() if v == box_coords]
+            if old_label:
+                del self.bounding_boxes[old_label[0]]
+            self.bounding_boxes[new_label] = box_coords
+        label_edit.deleteLater()
 
 
 def main():
