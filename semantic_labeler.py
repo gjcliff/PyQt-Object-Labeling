@@ -125,12 +125,12 @@ class MainWindow(QWidget):
 
         for i, (name, coords) in enumerate(landmarks.items()):
             frame = QFrame(self)
-            frame.setGeometry(start_x, start_y + (i * (self.spacing * 2)), 300, 100)
+            frame.setGeometry(start_x, start_y + (i * (self.spacing * 2)), 300, 20)
             frame.setStyleSheet("border: 1px solid black;")
 
             label = QLabel(f"{name}: ({coords['x']:.2f}, {coords['y']:.2f})", frame)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setGeometry(0, 0, 300, 100)
+            label.setGeometry(0, 0, 300, 20)
 
             self.landmark_labels.append(label)
             frame.show()
