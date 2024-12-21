@@ -1,29 +1,40 @@
 import os
 import sys
 import argparse
+import yaml
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
-    QHBoxLayout,
+    QVBoxLayout,
+    QFrame,
     QLabel,
     QPushButton,
     QLineEdit,
 )
-from PyQt6.QtGui import QPixmap, QPainter, QPen
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QGuiApplication
 from PyQt6.QtCore import Qt, QRect, QPoint
 
 
 class MainWindow(QWidget):
-    def __init__(self, images_dir, depths_dir):
+    def __init__(self, base_dir):
         super().__init__()
 
-        self.image_width = 720
-        self.image_height = 960
+        self.base_dir = base_dir
+        self.images_dir = os.path.join(base_dir, "images")
+        self.depths_dir = os.path.join(base_dir, "depths")
+        self.landmarks_dir = os.path.join(base_dir, "landmarks")
+
+        # figure out screen size
+        screen = QGuiApplication.primaryScreen()
+        screen_size = screen.availableGeometry()
+
+        self.image_width = 720  # default for iphone
+        self.image_height = 960  # default for iphone
         self.button_width = 50
         self.button_height = 50
         self.spacing = 10
-        self.window_width = self.image_width * 2 + self.spacing * 5
-        self.window_height = self.image_height + self.spacing * 2
+        self.window_width = int(screen_size.width())
+        self.window_height = int(screen_size.height())
 
         self.setWindowTitle("Image Viewer")
         self.setGeometry(
@@ -43,7 +54,7 @@ class MainWindow(QWidget):
         self.right_image_label = QLabel(self)
         # top left x, top left y, width, height
         self.right_image_label.setGeometry(
-            self.image_width + self.spacing,
+            self.image_width + self.spacing * 2,
             self.spacing,
             self.image_width,
             self.image_height,
@@ -58,12 +69,6 @@ class MainWindow(QWidget):
                     font-size: 24px; color: white;"
         self.left_button.setStyleSheet(button_style)
         self.right_button.setStyleSheet(button_style)
-
-        # Layout to arrange images side by side
-        self.layout = QHBoxLayout()
-        self.layout.addWidget(self.left_image_label)
-        self.layout.addWidget(self.right_image_label)
-        self.setLayout(self.layout)
 
         # Set up the buttons' positions using absolute positioning
         self.left_button.setGeometry(
@@ -88,23 +93,56 @@ class MainWindow(QWidget):
         self.end_point = None
         self.current_label = None
         self.bounding_boxes = {}  # Store bounding boxes as {label: (coords)}
+        self.labels = {}
 
         # Load images from directories
-        self.images = self.load_images(images_dir)
-        self.depths = self.load_images(depths_dir)
+        self.images = self.load_images(self.images_dir)
+        self.depths = self.load_images(self.depths_dir)
         self.current_index = 0  # Start with the first pair
 
         # Connect buttons to methods
         self.left_button.clicked.connect(self.show_previous_images)
         self.right_button.clicked.connect(self.show_next_images)
 
+        # yaml stuff
+        self.landmark_labels = []
+        self.display_landmarks(self.load_yaml(self.landmarks_dir))
+
+    def load_yaml(self, yaml_path):
+        files = os.listdir(yaml_path)
+        yaml_file = next((f for f in files if f.endswith(".yaml")), None)
+
+        if not yaml_file:
+            raise FileNotFoundError(f"No YAML file found in directory: {yaml_path}")
+
+        yaml_file_path = os.path.join(yaml_path, yaml_file)
+        with open(yaml_file_path, "r") as file:
+            return yaml.safe_load(file)
+
+    def display_landmarks(self, landmarks):
+        start_x = self.image_width * 2 + self.spacing * 3
+        start_y = 0
+
+        for i, (name, coords) in enumerate(landmarks.items()):
+            frame = QFrame(self)
+            frame.setGeometry(start_x, start_y + (i * (self.spacing * 2)), 300, 100)
+            frame.setStyleSheet("border: 1px solid black;")
+
+            label = QLabel(f"{name}: ({coords['x']:.2f}, {coords['y']:.2f})", frame)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setGeometry(0, 0, 300, 100)
+
+            self.landmark_labels.append(label)
+            frame.show()
+            label.show()
+
     def load_images(self, dir_path):
         """Load all image file paths from the directory."""
         images = []
         for filename in os.listdir(dir_path):
-            if filename.endswith(".jpg"):  # Add more file types if needed
+            if filename.endswith(".jpg") or filename.endswith(".png"):
                 images.append(os.path.join(dir_path, filename))
-        images.sort()  # Sort files (optional, but ensures correct order)
+        images.sort()
         return images
 
     def display_images(self):
@@ -137,11 +175,13 @@ class MainWindow(QWidget):
     def show_previous_images(self):
         """Show the previous pair of images."""
         self.current_index = (self.current_index - 1) % len(self.images)
+        self.bounding_boxes = {}
         self.display_images()
 
     def show_next_images(self):
         """Show the next pair of images."""
         self.current_index = (self.current_index + 1) % len(self.images)
+        self.bounding_boxes = {}
         self.display_images()
 
     def mousePressEvent(self, event):
@@ -184,6 +224,21 @@ class MainWindow(QWidget):
             label_edit.editingFinished.connect(
                 lambda: self.update_label(label_edit, box_coords)
             )
+            self.labels[label_name] = label_edit
+
+            label_edit = QLineEdit(self)
+            label_edit.setText(label_name)
+            label_edit.setGeometry(
+                box_coords.topLeft().x() + self.right_image_label.geometry().x(),
+                box_coords.topLeft().y() + self.right_image_label.geometry().y() - 20,
+                50,
+                20,
+            )
+            label_edit.show()
+            label_edit.editingFinished.connect(
+                lambda: self.update_label(label_edit, box_coords)
+            )
+            self.labels[label_name] = label_edit
 
             # Add bounding box to the dictionary
             self.bounding_boxes[label_name] = box_coords
@@ -198,9 +253,11 @@ class MainWindow(QWidget):
         right_image_path = self.depths[self.current_index]
         right_pixmap = QPixmap(right_image_path)
 
-        painter = QPainter(left_pixmap)
+        left_painter = QPainter(left_pixmap)
+        right_painter = QPainter(right_pixmap)
         pen = QPen(Qt.GlobalColor.green, 2, Qt.PenStyle.SolidLine)
-        painter.setPen(pen)
+        left_painter.setPen(pen)
+        right_painter.setPen(pen)
 
         # Draw current bounding box
         if self.start_point and self.end_point:
@@ -208,13 +265,19 @@ class MainWindow(QWidget):
             if self.left_image_label.geometry().contains(
                 self.mapFromGlobal(QPoint(box.x(), box.y()))
             ):
-                painter.drawRect(
+                left_painter.drawRect(
+                    box.translated(self.left_image_label.geometry().topLeft())
+                )
+                right_painter.drawRect(
                     box.translated(self.left_image_label.geometry().topLeft())
                 )
             elif self.right_image_label.geometry().contains(
                 self.mapFromGlobal(QPoint(box.x(), box.y()))
             ):
-                painter.drawRect(
+                left_painter.drawRect(
+                    box.translated(self.right_image_label.geometry().topLeft())
+                )
+                right_painter.drawRect(
                     box.translated(self.right_image_label.geometry().topLeft())
                 )
 
@@ -223,17 +286,37 @@ class MainWindow(QWidget):
             if self.left_image_label.geometry().contains(
                 self.mapFromGlobal(QPoint(box.x(), box.y()))
             ):
-                painter.drawRect(
+                left_painter.drawRect(
                     box.translated(self.left_image_label.geometry().topLeft())
                 )
+                right_painter.drawRect(
+                    box.translated(self.left_image_label.geometry().topLeft())
+                )
+
+        for label, line_edit in self.labels.items():
+            if self.left_image_label.geometry().contains(
+                self.mapFromGlobal(QPoint(box.x(), box.y()))
+            ):
+                line_edit.setGeometry(
+                    box.topLeft().x() + self.left_image_label.geometry().x(),
+                    box.topLeft().y() + self.left_image_label.geometry().y() - 20,
+                    50,
+                    20,
+                )
+                line_edit.show()
             elif self.right_image_label.geometry().contains(
                 self.mapFromGlobal(QPoint(box.x(), box.y()))
             ):
-                painter.drawRect(
-                    box.translated(self.right_image_label.geometry().topLeft())
+                line_edit.setGeometry(
+                    box.topLeft().x() + self.right_image_label.geometry().x(),
+                    box.topLeft().y() + self.right_image_label.geometry().y() - 20,
+                    50,
+                    20,
                 )
+                line_edit.show()
 
-        painter.end()
+        left_painter.end()
+        right_painter.end()
         if 0 <= self.current_index < len(self.images):
             # Load left image
             self.left_image_label.setPixmap(
@@ -265,10 +348,17 @@ class MainWindow(QWidget):
         new_label = label_edit.text()
         if new_label:
             old_label = [k for k, v in self.bounding_boxes.items() if v == box_coords]
+            self.labels[new_label] = label_edit
             if old_label:
+                del self.labels[label_edit.text()]
                 del self.bounding_boxes[old_label[0]]
             self.bounding_boxes[new_label] = box_coords
+        # label_edit.clearFocus()
+        # label_edit.setDisabled(True)
+        # label_edit.hide()
+        label_edit.deselect()
         label_edit.deleteLater()
+        self.update()
 
 
 def main():
@@ -281,16 +371,14 @@ def main():
 
     # Construct the directories for images and depths
     base_dir = os.path.join("output", args.name)
-    images_dir = os.path.join(base_dir, "images")
-    depths_dir = os.path.join(base_dir, "depths")
 
-    if not os.path.exists(images_dir) or not os.path.exists(depths_dir):
-        print(f"One or both directories ({images_dir}, {depths_dir}) do not exist.")
+    if not os.path.exists(base_dir):
+        print(f"Path {base_dir} does not exist")
         sys.exit(1)
 
     # Create and show the PyQt window
     app = QApplication(sys.argv)
-    window = MainWindow(images_dir, depths_dir)
+    window = MainWindow(base_dir)
     window.show()
 
     sys.exit(app.exec())
