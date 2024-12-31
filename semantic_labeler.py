@@ -5,6 +5,7 @@ import yaml
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
+    QHBoxLayout,
     QVBoxLayout,
     QFrame,
     QLabel,
@@ -44,21 +45,8 @@ class MainWindow(QWidget):
             self.window_height,
         )
 
-        # Create labels for left and right images
-        self.left_image_label = QLabel(self)
-        # top left x, top left y, width, height
-        self.left_image_label.setGeometry(
-            self.spacing, self.spacing, self.image_width, self.image_height
-        )
-
-        self.right_image_label = QLabel(self)
-        # top left x, top left y, width, height
-        self.right_image_label.setGeometry(
-            self.image_width + self.spacing * 2,
-            self.spacing,
-            self.image_width,
-            self.image_height,
-        )
+        main_layout = QHBoxLayout(self)
+        images_layout = QHBoxLayout()
 
         # Navigation buttons for the left image
         self.left_button = QPushButton("<", self)
@@ -70,23 +58,33 @@ class MainWindow(QWidget):
         self.left_button.setStyleSheet(button_style)
         self.right_button.setStyleSheet(button_style)
 
-        # Set up the buttons' positions using absolute positioning
-        self.left_button.setGeometry(
-            QRect(
-                self.spacing,
-                int(self.image_height / 2),
-                self.button_width,
-                self.button_height,
-            )
-        )
-        self.right_button.setGeometry(
-            QRect(
-                self.image_width + self.spacing - self.button_width + 1,
-                int(self.image_height / 2),
-                self.button_width,
-                self.button_height,
-            )
-        )
+        self.left_image_label = QLabel(self)
+        self.right_image_label = QLabel(self)
+
+        self.landmark_frames = []
+        self.landmark_labels = []
+
+        left_image_overlay_widget = QWidget(self)
+        left_image_overlay_layout = QVBoxLayout(left_image_overlay_widget)
+
+        button_overlay = QWidget(self)
+        button_overlay.setStyleSheet("background: rgba(0, 0, 0, 0);")
+        button_overlay_layout = QVBoxLayout(button_overlay)
+
+        button_overlay_layout.addWidget(self.left_button)
+        button_overlay_layout.addWidget(self.right_button)
+
+        left_image_overlay_layout.addWidget(self.left_image_label)
+        left_image_overlay_layout.addWidget(button_overlay)
+
+        # if you want the images to swap places, you can reverse the order of
+        # these next two lines
+        images_layout.addWidget(self.right_image_label)
+        images_layout.addWidget(left_image_overlay_widget)
+
+        main_layout.addLayout(images_layout)
+
+        self.setLayout(main_layout)
 
         # Variables for bounding box
         self.start_point = None
@@ -120,21 +118,34 @@ class MainWindow(QWidget):
             return yaml.safe_load(file)
 
     def display_landmarks(self, landmarks):
-        start_x = self.image_width * 2 + self.spacing * 3
-        start_y = 0
+        landmarks_layout = QVBoxLayout()
+
+        # start_x = self.image_width * 2 + self.spacing * 3
+        # start_y = 0
 
         for i, (name, coords) in enumerate(landmarks.items()):
             frame = QFrame(self)
-            frame.setGeometry(start_x, start_y + (i * (self.spacing * 2)), 300, 20)
             frame.setStyleSheet("border: 1px solid black;")
+            # frame.setGeometry(start_x, start_y + (i * (self.spacing * 2)), 300, 20)
 
             label = QLabel(f"{name}: ({coords['x']:.2f}, {coords['y']:.2f})", frame)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setGeometry(0, 0, 300, 20)
+            # label.setGeometry(0, 0, 300, 20)
+
+            frame.setLayout(QVBoxLayout())
+            frame.layout().addWidget(label)
+
+            landmarks_layout.addWidget(frame)
 
             self.landmark_labels.append(label)
             frame.show()
             label.show()
+
+        landmarks_widget = QWidget(self)
+        landmarks_widget.setLayout(landmarks_layout)
+
+        self.layout().addWidget(landmarks_widget)
+
 
     def load_images(self, dir_path):
         """Load all image file paths from the directory."""
